@@ -1,0 +1,46 @@
+# syntax=docker/dockerfile:1.4
+# Builder Dockerfile for producing a ralphex binary using only Docker.
+#
+# Usage (recommended):
+#  - Build with BuildKit and export directly to host:
+#      DOCKER_BUILDKIT=1 docker build --output type=local,dest=.bin -f Dockerfile.build --build-arg VERSION=$(git describe --tags --always --dirty) .
+#
+#  - Fallback (no BuildKit): build image then copy artifact out of the image:
+#      docker build -t ralphex-builder -f Dockerfile.build --build-arg VERSION=$(git describe --tags --always --dirty) .
+#      mkdir -p .bin
+#      docker create --name ralphex-temp ralphex-builder >/dev/null
+#      docker cp ralphex-temp:/out/ralphex ./.bin/ralphex
+#      docker rm ralphex-temp
+#      chmod +x ./.bin/ralphex
+
+FROM golang:1.26.1 AS builder
+
+ARG VERSION=dev
+ARG TARGETOS=linux
+ARG TARGETARCH=amd64
+
+WORKDIR /src
+
+# copy go modules first for layer caching
+COPY go.mod go.sum ./
+# use a cache mount for module download so the module cache is not baked into
+# the image layers. This prevents the local exporter from attempting to copy
+# the whole module cache into the host `.bin` directory.
+RUN --mount=type=cache,target=/go/pkg/mod go env -w GOPROXY=https://proxy.golang.org && go mod download
+
+# copy the rest of the repository
+COPY . ./
+
+# ensure output dir exists
+RUN mkdir -p /out
+
+# build the binary. Use cache mounts (BuildKit) when available to speed up rebuilds.
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
+    go build -trimpath -ldflags "-X main.revision=${VERSION} -s -w" -o /out/ralphex ./cmd/ralphex
+
+## Final minimal stage: produce a tiny image containing only the built binary.
+FROM scratch AS dist
+COPY --from=builder /out/ralphex /ralphex
+CMD ["/bin/true"]
