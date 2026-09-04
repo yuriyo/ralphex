@@ -1480,7 +1480,9 @@ func TestService_CreateWorktreeForPlan(t *testing.T) {
 		secondPath := filepath.Join(dir, ".ralphex", "worktrees", "branch-conflict-2")
 		err = svc.repo.addWorktree(secondPath, "branch-conflict", false)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "already used by worktree")
+		errMsg := err.Error()
+		assert.True(t, strings.Contains(errMsg, "already used by worktree") || strings.Contains(errMsg, "is already checked out"),
+			"error should indicate branch is already in use: %s", errMsg)
 	})
 
 	t.Run("strips date prefix from branch name", func(t *testing.T) {
